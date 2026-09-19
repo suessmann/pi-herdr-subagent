@@ -1,0 +1,42 @@
+{
+  "name": "pi-herdr-subagent",
+  "version": "0.1.0",
+  "description": "Run persistent Pi subagents in Herdr tabs and communicate through Herdr agent automation.",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "herdr",
+    "subagent"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/suessmann/pi-herdr-subagent.git"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:e2e": "node --import tsx test/e2e-herdr.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "latest",
+    "@earendil-works/pi-coding-agent": "latest",
+    "@earendil-works/pi-tui": "latest",
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typebox": "latest",
+    "typescript": "latest"
+  }
+}
