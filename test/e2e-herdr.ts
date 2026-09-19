@@ -39,7 +39,7 @@ if (!subagent || !launch || !prompt) throw new Error("Expected tools were not re
 
 const result = await subagent.execute(
   "e2e-subagent",
-  { agent: "worker", task: "Reply with exactly E2E_OK and nothing else.", timeoutMs: 180_000 },
+  { task: "Reply with exactly E2E_OK and nothing else.", timeoutMs: 180_000 },
   undefined,
   (update: any) => console.error(update.content?.[0]?.text ?? "update"),
   context,

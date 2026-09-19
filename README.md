@@ -43,10 +43,16 @@ pi -e ./extensions/index.ts
 
 ### `subagent`
 
-Compatible with the common Pi subagent shape:
+The `worker` role is the default, so a task can be delegated without naming an agent:
 
 ```json
-{ "agent": "worker", "task": "Implement the requested change" }
+{ "task": "Implement the requested change" }
+```
+
+The bundled default worker uses `openai-codex/gpt-5.6-terra` with medium thinking. If the user requests another role, pass it explicitly and that request takes precedence:
+
+```json
+{ "agent": "reviewer", "task": "Review the current diff" }
 ```
 
 Run up to four tasks in parallel:
@@ -107,12 +113,13 @@ name: reviewer
 description: Reviews a change
 tools: read, grep, find, ls, bash
 model: anthropic/claude-sonnet-4-5
+thinking: medium
 ---
 
 Review for correctness and regressions. Do not edit files.
 ```
 
-User definitions override bundled definitions. Project definitions override both when enabled. If a role omits `model`, it inherits the parent's active model and thinking level.
+User definitions override bundled definitions. Project definitions override both when enabled. If a role omits `model`, it inherits the parent's active model. If it omits `thinking`, it inherits the parent thinking level when the model is inherited; an explicitly configured model can set its own `thinking` level.
 
 ## Failure behavior
 

@@ -177,7 +177,8 @@ async function launchAgent(options: {
     const childArgs: string[] = [];
     const model = options.role.model ?? options.model;
     if (model) childArgs.push("--model", model);
-    if (!options.role.model && options.thinking) childArgs.push("--thinking", options.thinking);
+    const thinking = options.role.thinking ?? (!options.role.model ? options.thinking : undefined);
+    if (thinking) childArgs.push("--thinking", thinking);
     if (options.role.tools?.length) childArgs.push("--tools", options.role.tools.join(","));
     if (running.promptFile) childArgs.push("--append-system-prompt", running.promptFile);
 
@@ -294,7 +295,9 @@ async function runTask(options: {
 
 const ScopeSchema = StringEnum(["user", "project", "both"] as const, { default: "user" });
 const TaskSchema = Type.Object({
-  agent: Type.String({ description: "Agent role (for example worker, scout, planner, or reviewer)" }),
+  agent: Type.Optional(
+    Type.String({ description: "Agent role. Defaults to worker; explicit roles are always respected." }),
+  ),
   task: Type.String(),
   cwd: Type.Optional(Type.String()),
 });
@@ -388,7 +391,7 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent",
     label: "Herdr Subagent",
-    description: "Delegate one task or parallel tasks to acknowledged Pi subagents in separate Herdr tabs. Each task uses herdr agent prompt, pauses this tool until the child reports its final result and settles idle/done, returns that report to the parent, and closes the child tab.",
+    description: "Delegate one task or parallel tasks to acknowledged Pi subagents in separate Herdr tabs. The default role is worker (GPT-5.6 Terra, medium); always use another role when the user requests one. Each task uses herdr agent prompt, pauses this tool until the child reports its final result and settles idle/done, returns that report to the parent, and closes the child tab.",
     promptSnippet: "Delegate isolated work to Pi agents running in visible Herdr tabs",
     parameters: Type.Object({
       agent: Type.Optional(Type.String()),
@@ -399,10 +402,10 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
       timeoutMs: Type.Optional(Type.Integer({ minimum: 10_000, maximum: 3_600_000, default: DEFAULT_TIMEOUT_MS })),
     }),
     async execute(_id, params, signal, onUpdate, ctx) {
-      const hasSingle = Boolean(params.agent && params.task);
+      const hasSingle = Boolean(params.task);
       const hasParallel = Boolean(params.tasks?.length);
       if (Number(hasSingle) + Number(hasParallel) !== 1) {
-        throw new Error("Provide exactly one mode: agent + task, or tasks");
+        throw new Error("Provide exactly one mode: task (agent defaults to worker), or tasks");
       }
       const scope: AgentScope = params.agentScope ?? "user";
       const defaults = {
@@ -415,8 +418,8 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
         signal,
       };
 
-      if (hasSingle && params.agent && params.task) {
-        const role = findRole(ctx.cwd, scope, params.agent);
+      if (hasSingle && params.task) {
+        const role = findRole(ctx.cwd, scope, params.agent ?? "worker");
         onUpdate?.({ content: [{ type: "text", text: `Launching ${role.name} in a Herdr tab…` }], details: {} });
         const result = await runTask({
           ...defaults,
@@ -434,7 +437,7 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
       const settled = await Promise.allSettled(
         tasks.map((item) =>
           (() => {
-            const role = findRole(ctx.cwd, scope, item.agent);
+            const role = findRole(ctx.cwd, scope, item.agent ?? "worker");
             return runTask({
               ...defaults,
               role,
@@ -456,7 +459,7 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
       };
     },
     renderCall(args, theme) {
-      const label = args.tasks?.length ? `${args.tasks.length} parallel tasks` : `${args.agent ?? "agent"}: ${args.task ?? "…"}`;
+      const label = args.tasks?.length ? `${args.tasks.length} parallel tasks` : `${args.agent ?? "worker"}: ${args.task ?? "…"}`;
       return new Text(theme.fg("toolTitle", theme.bold("herdr subagent ")) + theme.fg("accent", label), 0, 0);
     },
   });
