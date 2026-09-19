@@ -52,6 +52,16 @@ function formatElapsed(startedAt: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+function requireParentSummary(report: string): string {
+  return [
+    "The subagent has finished and its Herdr tab has been closed.",
+    "",
+    report,
+    "",
+    "REQUIRED NEXT STEP: Summarize the subagent's findings for the user in your own words. Highlight the answer, material findings, changes, and caveats as applicable. Do not end the turn with only this tool result.",
+  ].join("\n");
+}
+
 export function parseHerdrJson(text: string): any {
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
   for (let index = lines.length - 1; index >= 0; index--) {
@@ -393,6 +403,9 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
     label: "Herdr Subagent",
     description: "Delegate one task or parallel tasks to acknowledged Pi subagents in separate Herdr tabs. The default role is worker (GPT-5.6 Terra, medium); always use another role when the user requests one. Each task uses herdr agent prompt, pauses this tool until the child reports its final result and settles idle/done, returns that report to the parent, and closes the child tab.",
     promptSnippet: "Delegate isolated work to Pi agents running in visible Herdr tabs",
+    promptGuidelines: [
+      "After subagent completes, always summarize its findings for the user in your own words before ending the turn.",
+    ],
     parameters: Type.Object({
       agent: Type.Optional(Type.String()),
       task: Type.Optional(Type.String()),
@@ -429,7 +442,10 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
           onState: (name, status, removeOnSettle) =>
             setDisplayAgent(ctx, name, role.name, status, { task: params.task, removeOnSettle }),
         });
-        return { content: [{ type: "text", text: result.output }], details: { mode: "single", results: [result] } };
+        return {
+          content: [{ type: "text", text: requireParentSummary(result.output) }],
+          details: { mode: "single", results: [result] },
+        };
       }
 
       const tasks = params.tasks ?? [];
@@ -454,7 +470,14 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
       const sections = results.map((item) => `### ${item.role} (${item.name})\n\n${item.output}`);
       for (const failure of failures) sections.push(`### Failed\n\n${failure.reason instanceof Error ? failure.reason.message : String(failure.reason)}`);
       return {
-        content: [{ type: "text", text: `${results.length}/${tasks.length} agents completed\n\n${sections.join("\n\n---\n\n")}` }],
+        content: [
+          {
+            type: "text",
+            text: requireParentSummary(
+              `${results.length}/${tasks.length} agents completed\n\n${sections.join("\n\n---\n\n")}`,
+            ),
+          },
+        ],
         details: { mode: "parallel", results, failures: failures.length },
       };
     },
@@ -510,7 +533,10 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "herdr_agent_prompt",
     label: "Prompt Herdr Agent",
-    description: "Communicate with a live named subagent using herdr agent prompt. By default wait until Herdr reports idle or done, return its result to the parent, and close its tab.",
+    description: "Communicate with a live named subagent using herdr agent prompt. By default wait until Herdr reports idle or done, return its result to the parent, close its tab, and require a user-facing summary.",
+    promptGuidelines: [
+      "After herdr_agent_prompt returns a completed report, always summarize its findings for the user before ending the turn.",
+    ],
     parameters: Type.Object({
       name: Type.String(),
       prompt: Type.String(),
@@ -566,7 +592,7 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
         setDisplayAgent(ctx, params.name, previousRole, "waiting");
       }
       return {
-        content: [{ type: "text", text: output }],
+        content: [{ type: "text", text: shouldClose ? requireParentSummary(output) : output }],
         details: { name: params.name, tabId, paneId, status, closed: shouldClose },
       };
     },

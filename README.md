@@ -8,10 +8,11 @@ Unlike Pi's process-based subagent example, every child is a normal interactive 
 2. `herdr agent start <short-name> --kind pi` starts the child.
 3. A system-prompt contract tells the child that it is a subordinate agent whose final message is a report to the parent.
 4. `herdr agent prompt` submits work and waits for Herdr's `idle` or `done` state.
-5. The extension reads the child's report from its native Pi session and returns it as the parent tool result.
+5. The extension reads the child's report from its native Pi session.
 6. The parent-side extension closes the completed child tab.
+7. The tool returns the report with a required next step telling the main agent to summarize the findings for the user in its own words.
 
-The parent tool call remains paused while Herdr waits. The child prefixes normal delegated reports with `SUBAGENT_RESULT:` and becomes idle after reporting. A separate pause tool sends `ctrl+c` when an in-progress child must be interrupted.
+The parent tool call remains paused while Herdr waits. The child prefixes normal delegated reports with `SUBAGENT_RESULT:` and becomes idle after reporting. After collecting the report and closing the child, both tool metadata and the returned result require the main agent to provide a concise user-facing summary rather than ending with the raw subagent output. A separate pause tool sends `ctrl+c` when an in-progress child must be interrupted.
 
 In Pi's TUI, a compact **Subagents** widget appears directly above the prompt. It lists each managed agent's short name, role, lifecycle state, and elapsed time. Completed task agents remain visible as `done` until the parent turn settles; persistent agents remain listed until they are closed.
 

@@ -47,6 +47,7 @@ const result = await subagent.execute(
 const text = result.content?.[0]?.text ?? "";
 console.log(text);
 if (!text.includes("E2E_OK")) throw new Error(`Unexpected subagent result: ${text}`);
+if (!text.includes("REQUIRED NEXT STEP")) throw new Error("Subagent result did not require a parent summary");
 
 const name = `e2e-${Math.random().toString(36).slice(2, 7)}`;
 await launch.execute("e2e-launch", { name, agent: "worker" }, undefined, undefined, context);
@@ -60,4 +61,5 @@ const prompted = await prompt.execute(
 const promptedText = prompted.content?.[0]?.text ?? "";
 console.log(promptedText);
 if (!promptedText.includes("PROMPT_OK")) throw new Error(`Unexpected prompt result: ${promptedText}`);
+if (!promptedText.includes("REQUIRED NEXT STEP")) throw new Error("Prompt result did not require a parent summary");
 if (prompted.details?.closed !== true) throw new Error("Prompted agent tab was not reported closed");
