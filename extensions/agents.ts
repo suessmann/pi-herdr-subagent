@@ -12,6 +12,7 @@ export interface AgentConfig {
   tools?: string[];
   model?: string;
   thinking?: string;
+  autoExit?: boolean;
   systemPrompt: string;
   source: AgentSource;
   filePath: string;
@@ -23,6 +24,7 @@ type AgentFrontmatter = {
   tools?: unknown;
   model?: unknown;
   thinking?: unknown;
+  "auto-exit"?: unknown;
 };
 
 function parseToolList(value: unknown): string[] | undefined {
@@ -55,6 +57,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
         tools: parseToolList(frontmatter.tools),
         model: typeof frontmatter.model === "string" ? frontmatter.model : undefined,
         thinking: typeof frontmatter.thinking === "string" ? frontmatter.thinking : undefined,
+        autoExit: typeof frontmatter["auto-exit"] === "boolean" ? frontmatter["auto-exit"] : undefined,
         systemPrompt: body,
         source,
         filePath,

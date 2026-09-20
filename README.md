@@ -7,10 +7,10 @@ Unlike Pi's process-based subagent example, every child is a normal interactive 
 1. `herdr tab create` creates a tab and root pane.
 2. `herdr agent start <short-name> --kind pi` starts the child.
 3. A system-prompt contract tells the child that it is a subordinate agent whose final message is a report to the parent.
-4. `herdr agent prompt` submits work and waits for Herdr's `idle` or `done` state.
+4. `herdr agent prompt` submits work and waits for Herdr's `idle` or `done` state—inside the tool for bounded `subagent` calls, or in a background watcher for persistent launches.
 5. The extension reads the child's report from its native Pi session.
-6. The parent-side extension closes the completed child tab.
-7. The tool returns the report with a required next step telling the main agent to summarize the findings for the user in its own words.
+6. The parent-side extension optionally closes the completed child tab.
+7. The awaited tool result or a structured background extension message wakes the parent and requires it to summarize the findings for the user.
 
 The parent tool call remains paused while Herdr waits. The child prefixes normal delegated reports with `SUBAGENT_RESULT:` and becomes idle after reporting. After collecting the report and closing the child, both tool metadata and the returned result require the main agent to provide a concise user-facing summary rather than ending with the raw subagent output. A separate pause tool sends `ctrl+c` when an in-progress child must be interrupted.
 
@@ -77,7 +77,9 @@ Launch a persistent child in a new tab with an explicit short name:
 { "name": "api-review", "agent": "reviewer", "prompt": "Inspect the API changes" }
 ```
 
-Names follow Herdr's `[a-z][a-z0-9_-]{0,31}` rule.
+When an initial prompt is supplied, `notifyParent` defaults to `true`. The launch returns immediately while a background `herdr agent prompt --wait` watcher remains attached. When the child settles, the watcher collects its report, optionally closes its tab, and injects a structured extension message that wakes the parent session.
+
+Set `closeOnComplete: false` to keep the completed child available for follow-up work. Set `notifyParent: false` only for deliberate fire-and-forget behavior; no automatic handoff occurs in that mode. Names follow Herdr's `[a-z][a-z0-9_-]{0,31}` rule.
 
 ### `herdr_agent_prompt`
 
@@ -88,6 +90,16 @@ Communicate with a live child through `herdr agent prompt`:
 ```
 
 By default it waits for `done`, returns the final response, and closes the child's tab. Set `wait: false` for fire-and-forget communication or `closeOnDone: false` to keep the tab.
+
+### `herdr_agent_wait`
+
+Attach explicitly to an existing child, including one launched without notification:
+
+```json
+{ "name": "api-review", "closeOnDone": true }
+```
+
+It waits for `idle`/`done`, collects the report, optionally closes the tab, and returns the result to the current parent turn.
 
 ### `herdr_agent_pause`
 
@@ -115,19 +127,21 @@ description: Reviews a change
 tools: read, grep, find, ls, bash
 model: anthropic/claude-sonnet-4-5
 thinking: medium
+auto-exit: true
 ---
 
 Review for correctness and regressions. Do not edit files.
 ```
 
-User definitions override bundled definitions. Project definitions override both when enabled. If a role omits `model`, it inherits the parent's active model. If it omits `thinking`, it inherits the parent thinking level when the model is inherited; an explicitly configured model can set its own `thinking` level.
+User definitions override bundled definitions. Project definitions override both when enabled. If a role omits `model`, it inherits the parent's active model. If it omits `thinking`, it inherits the parent thinking level when the model is inherited; an explicitly configured model can set its own `thinking` level. `auto-exit: true` is recognized and makes a watched persistent launch close its tab after the report is safely collected; `closeOnComplete` on the launch call takes precedence.
 
 ## Failure behavior
 
 - Startup failures close the newly created tab.
 - User cancellation closes the child tab.
 - Timeout, blocked state, or prompt errors leave the tab open for inspection.
-- Successful `idle`/`done` tasks are read first and then closed by the parent-side tool.
+- Successful `idle`/`done` tasks are read before any configured tab close.
+- Background watchers belong to the current Pi session runtime. `/reload`, session replacement, or shutdown aborts the watcher without closing the child; use `herdr_agent_wait` after returning if needed.
 - `agent prompt --wait` does not identify individual turns when prompting an already-working agent; this is a Herdr semantic documented in its agent automation guide.
 
 ## Development

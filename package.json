@@ -1,6 +1,6 @@
 {
   "name": "pi-herdr-subagent",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Run persistent Pi subagents in Herdr tabs and communicate through Herdr agent automation.",
   "type": "module",
   "keywords": [

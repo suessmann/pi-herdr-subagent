@@ -317,6 +317,7 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
   const workspaceId = process.env.HERDR_WORKSPACE_ID;
   const run: Run = (args, signal, timeout) => pi.exec(binary, args, { signal, timeout });
   const displayAgents = new Map<string, DisplayAgent>();
+  const backgroundWatches = new Map<string, AbortController>();
 
   function refreshWidget(ctx: any): void {
     if (ctx.mode !== "tui") return;
@@ -379,6 +380,78 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
     refreshWidget(ctx);
   }
 
+  async function monitorLaunchedAgent(
+    agent: RunningAgent,
+    prompt: string,
+    ctx: any,
+    options: { closeOnComplete: boolean; timeoutMs?: number },
+  ): Promise<void> {
+    const controller = new AbortController();
+    backgroundWatches.get(agent.name)?.abort();
+    backgroundWatches.set(agent.name, controller);
+
+    try {
+      const args = [
+        "agent",
+        "prompt",
+        agent.name,
+        prompt,
+        "--wait",
+        "--until",
+        "idle",
+        "--until",
+        "done",
+      ];
+      if (options.timeoutMs) args.push("--timeout", String(options.timeoutMs));
+      await checked(run, args, controller.signal, options.timeoutMs ? options.timeoutMs + 10_000 : undefined);
+      if (controller.signal.aborted) return;
+
+      setDisplayAgent(ctx, agent.name, agent.role.name, "collecting");
+      const output = await collectOutput(run, agent);
+      if (options.closeOnComplete) {
+        await closeAgent(run, agent);
+        setDisplayAgent(ctx, agent.name, agent.role.name, "done", { removeOnSettle: true });
+      } else {
+        setDisplayAgent(ctx, agent.name, agent.role.name, "waiting");
+      }
+
+      pi.sendMessage(
+        {
+          customType: "herdr-subagent-result",
+          content: requireParentSummary(output),
+          display: true,
+          details: {
+            name: agent.name,
+            role: agent.role.name,
+            tabId: agent.tabId,
+            paneId: agent.paneId,
+            closed: options.closeOnComplete,
+          },
+        },
+        { deliverAs: "followUp", triggerTurn: true },
+      );
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      setDisplayAgent(ctx, agent.name, agent.role.name, "error");
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        pi.sendMessage(
+          {
+            customType: "herdr-subagent-result",
+            content: `Background subagent ${agent.name} failed: ${message}. Its tab was left open for inspection. Summarize this failure for the user.`,
+            display: true,
+            details: { name: agent.name, role: agent.role.name, tabId: agent.tabId, paneId: agent.paneId, closed: false },
+          },
+          { deliverAs: "followUp", triggerTurn: true },
+        );
+      } catch {
+        // The parent session may have shut down while the background wait was finishing.
+      }
+    } finally {
+      if (backgroundWatches.get(agent.name) === controller) backgroundWatches.delete(agent.name);
+    }
+  }
+
   pi.on("agent_settled", (_event, ctx) => {
     for (const [name, item] of displayAgents) {
       if (item.removeOnSettle) displayAgents.delete(name);
@@ -387,6 +460,8 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", (_event, ctx) => {
+    for (const controller of backgroundWatches.values()) controller.abort();
+    backgroundWatches.clear();
     displayAgents.clear();
     if (ctx.mode === "tui") ctx.ui.setWidget(WIDGET_ID, undefined);
   });
@@ -490,11 +565,21 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "herdr_agent_launch",
     label: "Launch Herdr Agent",
-    description: "Launch a named Pi agent in a new Herdr tab. The short name must match [a-z][a-z0-9_-]{0,31}. Optionally submit an initial prompt through herdr agent prompt without waiting.",
+    description: "Launch a named Pi agent in a new Herdr tab. With an initial prompt, a background watcher waits for idle/done, collects the final report, optionally closes the tab, and wakes the parent with a structured result. Set notifyParent false only for deliberate fire-and-forget operation.",
+    promptGuidelines: [
+      "Use herdr_agent_launch with its default notifyParent behavior for persistent work so completed reports wake the parent automatically.",
+    ],
     parameters: Type.Object({
-      name: Type.String(),
+      name: Type.String({ description: "Short live name matching [a-z][a-z0-9_-]{0,31}" }),
       agent: Type.String({ description: "Agent role" }),
       prompt: Type.Optional(Type.String()),
+      notifyParent: Type.Optional(
+        Type.Boolean({ description: "Watch an initial prompt and wake the parent with its result. Default: true.", default: true }),
+      ),
+      closeOnComplete: Type.Optional(
+        Type.Boolean({ description: "Close the child tab after its report is collected. Defaults to the role's auto-exit setting, then true.", default: true }),
+      ),
+      timeoutMs: Type.Optional(Type.Integer({ minimum: 10_000, maximum: 86_400_000 })),
       agentScope: Type.Optional(ScopeSchema),
       cwd: Type.Optional(Type.String()),
     }),
@@ -515,7 +600,14 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
         });
         if (params.prompt) {
           setDisplayAgent(ctx, params.name, role.name, "working");
-          await checked(run, ["agent", "prompt", agent.name, params.prompt], signal, 30_000);
+          if (params.notifyParent ?? true) {
+            void monitorLaunchedAgent(agent, params.prompt, ctx, {
+              closeOnComplete: params.closeOnComplete ?? role.autoExit ?? true,
+              timeoutMs: params.timeoutMs,
+            });
+          } else {
+            await checked(run, ["agent", "prompt", agent.name, params.prompt], signal, 30_000);
+          }
         } else {
           setDisplayAgent(ctx, params.name, role.name, "waiting");
         }
@@ -523,9 +615,22 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
         setDisplayAgent(ctx, params.name, role.name, "error", { removeOnSettle: true });
         throw error;
       }
+      const watching = Boolean(params.prompt && (params.notifyParent ?? true));
       return {
-        content: [{ type: "text", text: `Launched ${agent.name} (${role.name}) in tab ${agent.tabId}${params.prompt ? " and submitted the prompt" : ""}.` }],
-        details: { name: agent.name, tabId: agent.tabId, paneId: agent.paneId, role: role.name },
+        content: [
+          {
+            type: "text",
+            text: `Launched ${agent.name} (${role.name}) in tab ${agent.tabId}${params.prompt ? " and submitted the prompt" : ""}.${watching ? " A background watcher will collect the completed report and wake this parent session." : ""}`,
+          },
+        ],
+        details: {
+          name: agent.name,
+          tabId: agent.tabId,
+          paneId: agent.paneId,
+          role: role.name,
+          watching,
+          closeOnComplete: watching ? (params.closeOnComplete ?? role.autoExit ?? true) : false,
+        },
       };
     },
   });
@@ -594,6 +699,59 @@ export default function herdrSubagentExtension(pi: ExtensionAPI) {
       return {
         content: [{ type: "text", text: shouldClose ? requireParentSummary(output) : output }],
         details: { name: params.name, tabId, paneId, status, closed: shouldClose },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "herdr_agent_wait",
+    label: "Wait for Herdr Agent",
+    description: "Wait for an already-running named subagent to become idle/done, collect its final report, optionally close its tab, and return the report for a user-facing parent summary.",
+    promptGuidelines: [
+      "After herdr_agent_wait returns, summarize the collected subagent findings for the user before ending the turn.",
+    ],
+    parameters: Type.Object({
+      name: Type.String(),
+      closeOnDone: Type.Optional(Type.Boolean({ default: true })),
+      timeoutMs: Type.Optional(Type.Integer({ minimum: 10_000, maximum: 86_400_000 })),
+    }),
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      requireWorkspace();
+      const info = await checked(run, ["agent", "get", params.name], signal, 15_000);
+      const tabId = info?.result?.agent?.tab_id;
+      const paneId = info?.result?.agent?.pane_id;
+      if (typeof tabId !== "string" || typeof paneId !== "string") {
+        throw new Error("Agent lookup did not return its tab and pane IDs");
+      }
+      const role = displayAgents.get(params.name)?.role ?? info?.result?.agent?.agent ?? "agent";
+      setDisplayAgent(ctx, params.name, role, "working");
+      const args = ["agent", "wait", params.name, "--until", "idle", "--until", "done"];
+      if (params.timeoutMs) args.push("--timeout", String(params.timeoutMs));
+      const response = await checked(run, args, signal, params.timeoutMs ? params.timeoutMs + 10_000 : undefined);
+      setDisplayAgent(ctx, params.name, role, "collecting");
+      const agent: RunningAgent = {
+        name: params.name,
+        tabId,
+        paneId,
+        role: { name: role, description: "", systemPrompt: "", source: "bundled", filePath: "" },
+      };
+      const output = await collectOutput(run, agent);
+      const shouldClose = params.closeOnDone ?? true;
+      if (shouldClose) {
+        await closeAgent(run, agent);
+        setDisplayAgent(ctx, params.name, role, "done", { removeOnSettle: true });
+      } else {
+        setDisplayAgent(ctx, params.name, role, "waiting");
+      }
+      return {
+        content: [{ type: "text", text: requireParentSummary(output) }],
+        details: {
+          name: params.name,
+          tabId,
+          paneId,
+          status: response?.result?.agent?.agent_status ?? "idle",
+          closed: shouldClose,
+        },
       };
     },
   });

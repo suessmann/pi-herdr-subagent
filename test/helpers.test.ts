@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { discoverAgents } from "../extensions/agents.ts";
 import { finalAssistantText, makeShortName, parseHerdrJson } from "../extensions/index.ts";
 
 test("parseHerdrJson returns the final JSON record", () => {
@@ -17,6 +18,19 @@ test("makeShortName returns a valid short Herdr name", () => {
 
 test("makeShortName truncates to 32 characters", () => {
   assert.equal(makeShortName("a".repeat(80), "12345").length, 32);
+});
+
+test("discoverAgents recognizes auto-exit frontmatter", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-herdr-agents-"));
+  const agentsDir = join(dir, ".pi", "agents");
+  mkdirSync(agentsDir, { recursive: true });
+  writeFileSync(
+    join(agentsDir, "monitor.md"),
+    "---\nname: monitor\ndescription: test monitor\nauto-exit: true\n---\nMonitor once.\n",
+  );
+  const role = discoverAgents(dir, "project").find((agent) => agent.name === "monitor");
+  assert.equal(role?.autoExit, true);
+  rmSync(dir, { recursive: true, force: true });
 });
 
 test("finalAssistantText reads the latest textual assistant message", () => {
