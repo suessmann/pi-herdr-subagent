@@ -22,7 +22,7 @@ Pi must run inside one of two hosts; the extension picks the backend automatical
 
 | Host | Detected by | Backend |
 |---|---|---|
-| Herdr desktop app (herdr-core, e.g. over SSH) | `HC_TERMINAL_ID` | `hc` terminals placed in the parent's space |
+| Herdr desktop app (herdr-core, e.g. over SSH) | `HC_TERMINAL_ID` | `hc` terminals nested under the parent's terminal (no tab of their own; `PI_SUBAGENT_TABS=1` for a tab each) |
 | Herdr TUI server | `HERDR_ENV=1` + `HERDR_WORKSPACE_ID` | `herdr` tabs and agent automation |
 
 herdr-core wins when both are present. Set `PI_SUBAGENT_BACKEND=herdr` or `herdr-core` to force one.
@@ -39,7 +39,7 @@ herdr integration install pi
 - Children run the parent's pi (`PI_BIN_PATH`, else pi's managed launcher, else `pi` on `PATH`) with the
   parent's `PATH`, a fresh `--session-id` (the report is read from that session file) and
   `PI_HERDR_SUBAGENT=1`, so other extensions can tell a subagent apart.
-- Children appear as panes in the parent's space; they end with the parent terminal.
+- Herdr desktop app: children are nested under the parent in the agent list (open one from there) and get no tab. Set `PI_SUBAGENT_TABS=1` to give each its own tab in the parent's space. They end with the parent terminal.
 - Prompts reach the child wrapped in `<hc from="…">` tags; the child contract explains them.
 
 ## Install

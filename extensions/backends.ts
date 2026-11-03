@@ -261,6 +261,8 @@ export class HerdrCoreBackend implements SubagentBackend {
     /** PATH for the child; herdr-core's own PATH usually lacks pi, node and user tools. */
     private readonly childPath = process.env.PATH ?? "",
     private readonly sessionsDir = sessionDirFromEnv(),
+    /** A tab of its own per child (PI_SUBAGENT_TABS=1). Default: nested under the parent's terminal, no tab. */
+    private readonly ownTabs = process.env.PI_SUBAGENT_TABS === "1",
   ) {}
 
   private run(args: string[], signal?: AbortSignal, timeout?: number): Promise<ExecResult> {
@@ -279,7 +281,7 @@ export class HerdrCoreBackend implements SubagentBackend {
     return `herdr-core terminal ${this.parentTerminal}`;
   }
 
-  /** The parent's space, so the desktop app shows children next to it. */
+  /** The parent's space: with a space label (and no tab), the desktop app gives the child a tab of its own. */
   private async parentSpace(signal?: AbortSignal): Promise<string | undefined> {
     const parent = await this.json(["get", this.parentTerminal], signal, SHORT_TIMEOUT_MS);
     const space = parent?.labels?.[SPACE_LABEL];
@@ -288,9 +290,14 @@ export class HerdrCoreBackend implements SubagentBackend {
 
   async start(options: StartOptions): Promise<AgentLocation> {
     const sessionId = randomUUID();
-    const space = await this.parentSpace(options.signal);
-    const args = ["run", "--bg", "--name", options.name, "--no-notify", "--cwd", options.cwd, "--label", `${ROLE_LABEL}=1`];
-    if (space) args.push("--label", `${SPACE_LABEL}=${space}`);
+    // Nested by default: a child of the parent's terminal without a space label stays
+    // under the parent in the app's agent list (open it from there) and opens no tab.
+    const args = ["run", "--bg", "--name", options.name, "--no-notify", "--cwd", options.cwd, "--label", `${ROLE_LABEL}=1`,
+      "--parent", this.parentTerminal];
+    if (this.ownTabs) {
+      const space = await this.parentSpace(options.signal);
+      if (space) args.push("--label", `${SPACE_LABEL}=${space}`);
+    }
     args.push(
       "--",
       "/usr/bin/env",

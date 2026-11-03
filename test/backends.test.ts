@@ -66,7 +66,7 @@ test("findSessionFile locates a session by id across project directories", () =>
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("HerdrCoreBackend starts pi beside the parent and waits until it accepts input", async () => {
+test("HerdrCoreBackend nests the child under the parent (no tab) and waits until it accepts input", async () => {
   const name = "worker-abc12";
   const address = "t9";
   const { exec, calls } = fakeHc({
@@ -84,16 +84,34 @@ test("HerdrCoreBackend starts pi beside the parent and waits until it accepts in
   const run = calls.find((args) => args[0] === "run");
   assert.ok(run);
   assert.equal(run[1], "--json", "--json must precede the child's argv");
-  assert.ok(run.includes(`herdr.space=${SPACE}`));
+  assert.ok(!run.includes(`herdr.space=${SPACE}`), "no space label: the app would open a tab for it");
+  assert.deepEqual(run.slice(run.indexOf("--parent"), run.indexOf("--parent") + 2), ["--parent", PARENT]);
   const child = run.slice(run.indexOf("--") + 1);
   assert.deepEqual(child.slice(0, 4), ["/usr/bin/env", `${SUBAGENT_ENV}=1`, `PATH=${childPath}`, PI_BIN]);
   assert.equal(child[4], "--session-id");
   assert.deepEqual(child.slice(6), piArgs);
   assert.deepEqual(
     calls.map((args) => args[0]),
-    ["get", "run", "wait", "get"],
+    ["run", "wait", "get"],
     "the child must report idle before start() returns",
   );
+});
+
+test("HerdrCoreBackend with PI_SUBAGENT_TABS gives the child a tab in the parent's space", async () => {
+  const name = "worker-tab12";
+  const address = "t10";
+  const { exec, calls } = fakeHc({
+    get: ok({ address, labels: { "herdr.space": SPACE }, status: { app: "pi" } }),
+    run: ok({ address, name }),
+    wait: ok({ reason: "status", status: "idle", ended: true }),
+  });
+  const backend = new HerdrCoreBackend(exec, HC_BIN, PARENT, PI_BIN, "/usr/bin", undefined, true);
+
+  await backend.start({ name, cwd: "/work", piArgs: [] });
+
+  const run = calls.find((args) => args[0] === "run");
+  assert.ok(run?.includes(`herdr.space=${SPACE}`));
+  assert.deepEqual(calls.map((args) => args[0]), ["get", "run", "wait", "get"]);
 });
 
 test("resolvePiBinary prefers the override, then pi's managed launcher, then PATH", () => {
